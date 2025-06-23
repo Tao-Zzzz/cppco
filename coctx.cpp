@@ -1,25 +1,34 @@
-/*
-* Tencent is pleased to support the open source community by making Libco
-available.
-
-* Copyright (C) 2014 THL A29 Limited, a Tencent company. All rights reserved.
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-*	http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing,
-* software distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*/
-
 #include "coctx.h"
 #include <stdio.h>
 #include <string.h>
+
+#if defined(_WIN32)
+
+#include <windows.h>
+
+int coctx_init(coctx_t *ctx)
+{
+  memset(ctx, 0, sizeof(*ctx));
+  ctx->fiber = NULL;
+  return 0;
+}
+
+int coctx_make(coctx_t *ctx, coctx_pfn_t pfn, const void *s, const void *s1)
+{
+  // 用结构体传递两个参数
+  coctx_param_t *param = (coctx_param_t *)malloc(sizeof(coctx_param_t));
+  param->s1 = s;
+  param->s2 = s1;
+  ctx->fiber = CreateFiber(ctx->ss_size, (LPFIBER_START_ROUTINE)pfn, param);
+  return ctx->fiber ? 0 : -1;
+}
+
+void coctx_swap(coctx_t *from, coctx_t *to)
+{
+  SwitchToFiber(to->fiber);
+}
+
+#else
 
 #define ESP 0
 #define EIP 1
@@ -85,6 +94,9 @@ enum {
 extern "C" {
 extern void coctx_swap(coctx_t*, coctx_t*) asm("coctx_swap");
 };
+
+
+
 #if defined(__i386__)
 int coctx_init(coctx_t* ctx) {
   memset(ctx, 0, sizeof(*ctx));
@@ -128,5 +140,7 @@ int coctx_init(coctx_t* ctx) {
   memset(ctx, 0, sizeof(*ctx));
   return 0;
 }
+
+#endif
 
 #endif

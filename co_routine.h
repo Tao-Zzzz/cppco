@@ -28,6 +28,7 @@
 struct stCoRoutine_t;
 struct stShareStack_t;
 
+// 创建协程的一些属性, 栈大小和是否使用栈
 struct stCoRoutineAttr_t
 {
 	int stack_size;
@@ -41,6 +42,7 @@ struct stCoRoutineAttr_t
 
 struct stCoEpoll_t;
 typedef int (*pfn_co_eventloop_t)(void *);
+// 协程运行的函数
 typedef void *(*pfn_co_routine_t)( void * );
 
 //2.co_routine

@@ -1,28 +1,127 @@
-/*
-* Tencent is pleased to support the open source community by making Libco available.
-
-* Copyright (C) 2014 THL A29 Limited, a Tencent company. All rights reserved.
-*
-* Licensed under the Apache License, Version 2.0 (the "License"); 
-* you may not use this file except in compliance with the License. 
-* You may obtain a copy of the License at
-*
-*	http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, 
-* software distributed under the License is distributed on an "AS IS" BASIS, 
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. 
-* See the License for the specific language governing permissions and 
-* limitations under the License.
-*/
-
 #include "co_epoll.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
+#include <map>
 
-#if !defined( __APPLE__ ) && !defined( __FreeBSD__ )
+#if defined(_WIN32)
+
+struct fd_event_map_entry
+{
+	struct epoll_event ev;
+};
+
+static std::map<SOCKET, fd_event_map_entry> &get_fd_event_map()
+{
+	static std::map<SOCKET, fd_event_map_entry> fd_event_map;
+	return fd_event_map;
+}
+
+int co_epoll_create(int size)
+{
+	HANDLE hIOCP = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
+	if (!hIOCP)
+	{
+		return -1;
+	}
+	return (int)(intptr_t)hIOCP;
+}
+
+int co_epoll_ctl(int epfd, int op, int fd, struct epoll_event *ev)
+{
+	HANDLE hIOCP = (HANDLE)(intptr_t)epfd;
+	SOCKET s = (SOCKET)fd;
+	auto &fd_event_map = get_fd_event_map();
+
+	if (op == EPOLL_CTL_ADD)
+	{
+		if (fd_event_map.count(s))
+		{
+			errno = EEXIST;
+			return -1;
+		}
+		if (CreateIoCompletionPort((HANDLE)s, hIOCP, (ULONG_PTR)s, 0) == NULL)
+		{
+			return -1;
+		}
+		fd_event_map[s].ev = *ev;
+		return 0;
+	}
+	else if (op == EPOLL_CTL_MOD)
+	{
+		if (!fd_event_map.count(s))
+		{
+			errno = ENOENT;
+			return -1;
+		}
+		fd_event_map[s].ev = *ev;
+		return 0;
+	}
+	else if (op == EPOLL_CTL_DEL)
+	{
+		fd_event_map.erase(s);
+		// IOCP 无法真正移除，只能不再处理
+		return 0;
+	}
+	return -1;
+}
+
+int co_epoll_wait(int epfd, struct co_epoll_res *events, int maxevents, int timeout)
+{
+	HANDLE hIOCP = (HANDLE)(intptr_t)epfd;
+	ULONG n = 0;
+	BOOL ret = GetQueuedCompletionStatusEx(
+		hIOCP,
+		events->iocp_events,
+		maxevents,
+		&n,
+		timeout < 0 ? INFINITE : timeout,
+		FALSE);
+	if (!ret)
+	{
+		return -1;
+	}
+	auto &fd_event_map = get_fd_event_map();
+	for (ULONG i = 0; i < n; ++i)
+	{
+		OVERLAPPED_ENTRY &oe = events->iocp_events[i];
+		SOCKET s = (SOCKET)oe.lpCompletionKey;
+		auto it = fd_event_map.find(s);
+		if (it != fd_event_map.end())
+		{
+			events->events[i] = it->second.ev;
+			// 可以根据 oe.dwNumberOfBytesTransferred 和 oe.lpOverlapped 设置更多信息
+		}
+		else
+		{
+			memset(&events->events[i], 0, sizeof(struct epoll_event));
+		}
+	}
+	return (int)n;
+}
+
+struct co_epoll_res *co_epoll_res_alloc(int n)
+{
+	struct co_epoll_res *ptr = (struct co_epoll_res *)malloc(sizeof(struct co_epoll_res));
+	ptr->size = n;
+	ptr->events = (struct epoll_event *)calloc(1, n * sizeof(struct epoll_event));
+	ptr->iocp_events = (OVERLAPPED_ENTRY *)calloc(1, n * sizeof(OVERLAPPED_ENTRY));
+	return ptr;
+}
+
+void co_epoll_res_free(struct co_epoll_res *ptr)
+{
+	if (!ptr)
+		return;
+	if (ptr->events)
+		free(ptr->events);
+	if (ptr->iocp_events)
+		free(ptr->iocp_events);
+	free(ptr);
+}
+
+#elif !defined(__APPLE__) && !defined(__FreeBSD__)
 
 int	co_epoll_wait( int epfd,struct co_epoll_res *events,int maxevents,int timeout )
 {
