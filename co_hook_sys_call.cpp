@@ -577,10 +577,12 @@ ssize_t recv( int socket, void *buffer, size_t length, int flags )
 
 extern int co_poll_inner( stCoEpoll_t *ctx,struct pollfd fds[], nfds_t nfds, int timeout, poll_pfn_t pollfunc);
 
+// 在hook以后的poll中应该执行协程的调度
 int poll(struct pollfd fds[], nfds_t nfds, int timeout)
 {
 	HOOK_SYS_FUNC( poll );
 
+	// 如果本线程不存在协程或者超时时间为零的话调用hook前的poll
 	if (!co_is_enable_sys_hook() || timeout == 0) {
 		return g_sys_poll_func(fds, nfds, timeout);
 	}
@@ -601,9 +603,13 @@ int poll(struct pollfd fds[], nfds_t nfds, int timeout)
 			}
 		}
 	}
+	// 以上就相当于是一个小优化,就是查看此次poll中是否有fd相同的事件,有的话合并一下,仅此而已
 
 	int ret = 0;
 	if (nfds_merge == nfds || nfds == 1) {
+		// fds为poll的事件;nfds为事件数;timeout为超时时间;g_sys_poll_func为未hook的poll函数
+		// 返回值为此次就绪的事件数
+		// 在co_poll_inner中有一个协程的切换
 		ret = co_poll_inner(co_get_epoll_ct(), fds, nfds, timeout, g_sys_poll_func);
 	} else {
 		ret = co_poll_inner(co_get_epoll_ct(), fds_merge, nfds_merge, timeout,
